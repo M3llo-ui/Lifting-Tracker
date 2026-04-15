@@ -10,6 +10,21 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0a0a0b; }
   </style>
+  <!-- Firebase (must load first) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDPY3XXgpXPOpYOdRWKyiShbWIuBCRwh1o",
+      authDomain: "lift-tracker-116bf.firebaseapp.com",
+      projectId: "lift-tracker-116bf",
+      storageBucket: "lift-tracker-116bf.firebasestorage.app",
+      messagingSenderId: "895956155830",
+      appId: "1:895956155830:web:409ec194a03bf7428ed517"
+    };
+    window.firebaseApp = firebase.initializeApp(firebaseConfig);
+    window.db = firebase.firestore();
+  </script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -18,6 +33,7 @@
   <div id="root"></div>
   <script type="text/babel">
 const { useState, useMemo, useCallback, useEffect } = React;
+const db = window.db;
 
 const STORAGE_KEY = "workouts-data";
 
@@ -30,12 +46,40 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7
 
 const LIFT_PRESETS = ["Bench Press","Squat","Deadlift","Overhead Press","Barbell Row","Lat Pulldown","Leg Press","Bicep Curl","Tricep Extension","Lunges","Calf Raise","Dumbbell Fly"];
 
-// --- Storage (localStorage only for standalone) ---
+// --- Storage (localStorage + Firestore) ---
+const WORKOUTS_COLLECTION = "workouts";
+
 function loadWorkouts() {
   try { const d = localStorage.getItem(STORAGE_KEY); return d ? JSON.parse(d) : []; } catch { return []; }
 }
-function saveWorkouts(w) {
+function saveWorkoutsLocal(w) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(w)); } catch {}
+}
+
+// Firestore helpers
+async function loadWorkoutsFromFirestore() {
+  try {
+    const snapshot = await db.collection(WORKOUTS_COLLECTION).get();
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (e) { console.error("Firestore load error:", e); return null; }
+}
+
+async function addWorkoutToFirestore(workout) {
+  try {
+    await db.collection(WORKOUTS_COLLECTION).doc(workout.id).set(workout);
+  } catch (e) { console.error("Firestore add error:", e); }
+}
+
+async function updateWorkoutInFirestore(workout) {
+  try {
+    await db.collection(WORKOUTS_COLLECTION).doc(workout.id).set(workout);
+  } catch (e) { console.error("Firestore update error:", e); }
+}
+
+async function deleteWorkoutFromFirestore(id) {
+  try {
+    await db.collection(WORKOUTS_COLLECTION).doc(id).delete();
+  } catch (e) { console.error("Firestore delete error:", e); }
 }
 
 // --- Icons (inline SVG) ---
@@ -437,27 +481,46 @@ function WorkoutTracker() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [editId, setEditId] = useState(null);
 
+  // Load from Firestore on mount, fall back to localStorage
   useEffect(() => {
-    setWorkouts(loadWorkouts());
+    (async () => {
+      const firestoreData = await loadWorkoutsFromFirestore();
+      if (firestoreData && firestoreData.length > 0) {
+        setWorkouts(firestoreData);
+        saveWorkoutsLocal(firestoreData);
+      } else {
+        const local = loadWorkouts();
+        setWorkouts(local);
+        // Sync any existing local data up to Firestore
+        for (const w of local) {
+          await addWorkoutToFirestore(w);
+        }
+      }
+    })();
   }, []);
 
+  // Save to localStorage whenever workouts change
   useEffect(() => {
-    saveWorkouts(workouts);
+    if (workouts.length > 0) saveWorkoutsLocal(workouts);
   }, [workouts]);
 
   const addWorkout = useCallback((w) => {
-    setWorkouts(prev => [...prev, { ...w, id: uid() }]);
+    const workout = { ...w, id: uid() };
+    setWorkouts(prev => [...prev, workout]);
+    addWorkoutToFirestore(workout);
     setShowForm(false);
   }, []);
 
   const updateWorkout = useCallback((w) => {
     setWorkouts(prev => prev.map(x => x.id === w.id ? w : x));
+    updateWorkoutInFirestore(w);
     setShowForm(false);
     setEditId(null);
   }, []);
 
   const deleteWorkout = useCallback((id) => {
     setWorkouts(prev => prev.filter(x => x.id !== id));
+    deleteWorkoutFromFirestore(id);
   }, []);
 
   const openEdit = useCallback((w) => {
@@ -519,5 +582,3 @@ root.render(<WorkoutTracker />);
   </script>
 </body>
 </html>
-  display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: 0.5,
-};
