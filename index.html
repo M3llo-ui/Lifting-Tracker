@@ -1,35 +1,43 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
- 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workout Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a0a0b; }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+const { useState, useMemo, useCallback, useEffect } = React;
+
 const STORAGE_KEY = "workouts-data";
- 
+
 // --- Helpers ---
 const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const parseDate = (s) => { const [y,m,d] = s.split("-"); return new Date(y, m-1, d); };
 const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const dayLabels = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
- 
+
 const LIFT_PRESETS = ["Bench Press","Squat","Deadlift","Overhead Press","Barbell Row","Lat Pulldown","Leg Press","Bicep Curl","Tricep Extension","Lunges","Calf Raise","Dumbbell Fly"];
- 
-// --- Storage ---
+
+// --- Storage (localStorage only for standalone) ---
 function loadWorkouts() {
   try { const d = localStorage.getItem(STORAGE_KEY); return d ? JSON.parse(d) : []; } catch { return []; }
 }
 function saveWorkouts(w) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(w)); } catch {}
 }
- 
-// --- Persistent storage integration ---
-async function loadFromPersistent() {
-  try {
-    const result = await window.storage.get("workouts-data");
-    return result ? JSON.parse(result.value) : null;
-  } catch { return null; }
-}
-async function saveToPersistent(w) {
-  try { await window.storage.set("workouts-data", JSON.stringify(w)); } catch {}
-}
- 
+
 // --- Icons (inline SVG) ---
 const Icons = {
   plus: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
@@ -42,8 +50,9 @@ const Icons = {
   chart: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
   list: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/></svg>,
   x: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  edit: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
 };
- 
+
 // --- Styles ---
 const C = {
   bg: "#0a0a0b",
@@ -60,124 +69,86 @@ const C = {
   walk: "#4dc9f6",
   walkDim: "rgba(77,201,246,0.12)",
 };
- 
-const font = `'DM Sans', 'Segoe UI', system-ui, sans-serif`;
-const fontMono = `'DM Mono', 'SF Mono', monospace`;
- 
-export default function WorkoutTracker() {
-  const [workouts, setWorkouts] = useState([]);
-  const [view, setView] = useState("calendar"); // calendar | stats | log
-  const [showForm, setShowForm] = useState(false);
-  const [calMonth, setCalMonth] = useState(new Date().getMonth());
-  const [calYear, setCalYear] = useState(new Date().getFullYear());
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [editId, setEditId] = useState(null);
-  const [loaded, setLoaded] = useState(false);
- 
-  // Load data on mount
-  useEffect(() => {
-    (async () => {
-      const persistent = await loadFromPersistent();
-      if (persistent && persistent.length > 0) {
-        setWorkouts(persistent);
-      } else {
-        setWorkouts(loadWorkouts());
-      }
-      setLoaded(true);
-    })();
-  }, []);
- 
-  // Save on change
-  useEffect(() => {
-    if (!loaded) return;
-    saveWorkouts(workouts);
-    saveToPersistent(workouts);
-  }, [workouts, loaded]);
- 
-  const addWorkout = useCallback((w) => {
-    setWorkouts(prev => [...prev, { ...w, id: uid() }]);
-    setShowForm(false);
-  }, []);
- 
-  const updateWorkout = useCallback((w) => {
-    setWorkouts(prev => prev.map(x => x.id === w.id ? w : x));
-    setShowForm(false);
-    setEditId(null);
-  }, []);
- 
-  const deleteWorkout = useCallback((id) => {
-    setWorkouts(prev => prev.filter(x => x.id !== id));
-  }, []);
- 
-  const openEdit = useCallback((w) => {
-    setEditId(w.id);
-    setShowForm(true);
-  }, []);
- 
-  const workoutsByDate = useMemo(() => {
-    const m = {};
-    workouts.forEach(w => { (m[w.date] = m[w.date] || []).push(w); });
-    return m;
-  }, [workouts]);
- 
-  // Font link
-  useEffect(() => {
-    if (!document.getElementById("dm-fonts")) {
-      const link = document.createElement("link");
-      link.id = "dm-fonts";
-      link.rel = "stylesheet";
-      link.href = "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap";
-      document.head.appendChild(link);
-    }
-  }, []);
- 
+
+const font = "'DM Sans', 'Segoe UI', system-ui, sans-serif";
+const fontMono = "'DM Mono', 'SF Mono', monospace";
+
+// ======================== SHARED STYLES ========================
+const btnStyle = {
+  border: "none", borderRadius: 10, cursor: "pointer", fontSize: 13, fontFamily: font, transition: "all .15s",
+};
+const tabStyle = {
+  ...btnStyle, padding: "8px 14px", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600,
+  border: "1px solid transparent", borderRadius: 10,
+};
+const iconBtnStyle = {
+  background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 8, cursor: "pointer", color: C.text, display: "flex", alignItems: "center", justifyContent: "center",
+};
+const iconBtnSmStyle = {
+  background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex", alignItems: "center", borderRadius: 6,
+};
+const inputStyle = {
+  background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px", color: C.text,
+  fontSize: 14, fontFamily: font, outline: "none", width: "100%", boxSizing: "border-box",
+};
+const labelStyle = {
+  display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: 0.5,
+};
+
+// ======================== WORKOUT CARD ========================
+function WorkoutCard({ w, onEdit, onDelete, showDate }) {
+  const isLift = w.type === "lift";
   return (
-    <div style={{ fontFamily: font, background: C.bg, color: C.text, minHeight: "100vh", maxWidth: 520, margin: "0 auto", padding: "0 0 100px", position: "relative" }}>
-      {/* Header */}
-      <div style={{ padding: "28px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>Workout Tracker</h1>
-          <p style={{ color: C.textDim, fontSize: 13, margin: "4px 0 0", fontWeight: 500 }}>{monthNames[new Date().getMonth()]} {new Date().getDate()}, {new Date().getFullYear()}</p>
+    <div style={{
+      background: C.surface, borderRadius: 14, padding: 16, marginBottom: 10,
+      border: `1px solid ${C.border}`, transition: "all .15s",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: isLift ? C.accentDim : C.walkDim, display: "flex", alignItems: "center", justifyContent: "center", color: isLift ? C.accent : C.walk }}>
+            {isLift ? Icons.dumbbell : Icons.walk}
+          </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>{isLift ? w.exercise : "Walking"}</div>
+            <div style={{ fontSize: 12, color: C.textDim, marginTop: 2 }}>
+              {showDate && <>{parseDate(w.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} &middot; </>}
+              {w.time && <>{w.time} &middot; </>}
+              {w.duration && <>{w.duration} min</>}
+            </div>
+          </div>
         </div>
-        <button onClick={() => { setEditId(null); setShowForm(true); }} style={{ ...btnStyle, background: C.accent, color: "#0a0a0b", fontWeight: 700, display: "flex", alignItems: "center", gap: 6, padding: "10px 18px" }}>
-          {Icons.plus} Log Workout
-        </button>
-      </div>
- 
-      {/* Nav Tabs */}
-      <div style={{ display: "flex", gap: 4, padding: "8px 20px 16px" }}>
-        {[["calendar","Calendar",Icons.calendar],["stats","Stats",Icons.chart],["log","History",Icons.list]].map(([k,label,icon]) => (
-          <button key={k} onClick={() => setView(k)} style={{ ...tabStyle, background: view===k ? C.surface2 : "transparent", color: view===k ? C.text : C.textDim, borderColor: view===k ? C.border : "transparent" }}>
-            {icon} {label}
+        <div style={{ display: "flex", gap: 4 }}>
+          <button onClick={() => onEdit(w)} style={{ ...iconBtnSmStyle, color: C.textDim }}>
+            {Icons.edit}
           </button>
-        ))}
+          <button onClick={() => onDelete(w.id)} style={{ ...iconBtnSmStyle, color: C.red }}>
+            {Icons.trash}
+          </button>
+        </div>
       </div>
- 
-      {/* Views */}
-      {view === "calendar" && (
-        <CalendarView
-          month={calMonth} year={calYear}
-          setMonth={setCalMonth} setYear={setCalYear}
-          workoutsByDate={workoutsByDate}
-          selectedDate={selectedDate} setSelectedDate={setSelectedDate}
-          onEdit={openEdit} onDelete={deleteWorkout}
-        />
+      {isLift && w.sets && w.sets.length > 0 && (
+        <div style={{ marginTop: 12, background: C.surface2, borderRadius: 10, padding: "10px 12px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr", gap: 4, fontSize: 11, color: C.textDim, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+            <span>Set</span><span>Reps</span><span>Weight</span>
+          </div>
+          {w.sets.map((s, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr", gap: 4, fontSize: 14, fontFamily: fontMono, padding: "3px 0" }}>
+              <span style={{ color: C.textDim }}>{i+1}</span>
+              <span>{s.reps}</span>
+              <span>{s.weight ? `${s.weight} lbs` : "—"}</span>
+            </div>
+          ))}
+        </div>
       )}
-      {view === "stats" && <StatsView workouts={workouts} />}
-      {view === "log" && <LogView workouts={workouts} onEdit={openEdit} onDelete={deleteWorkout} />}
- 
-      {/* Modal */}
-      {showForm && (
-        <WorkoutForm
-          onClose={() => { setShowForm(false); setEditId(null); }}
-          onSave={editId ? updateWorkout : addWorkout}
-          initial={editId ? workouts.find(w => w.id === editId) : (selectedDate ? { date: selectedDate } : null)}
-        />
+      {!isLift && w.steps && (
+        <div style={{ marginTop: 10, fontSize: 22, fontWeight: 700, fontFamily: fontMono, color: C.walk }}>
+          {parseInt(w.steps).toLocaleString()} <span style={{ fontSize: 13, fontWeight: 500, color: C.textDim }}>steps</span>
+        </div>
       )}
     </div>
   );
 }
- 
+
 // ======================== CALENDAR ========================
 function CalendarView({ month, year, setMonth, setYear, workoutsByDate, selectedDate, setSelectedDate, onEdit, onDelete }) {
   const firstDay = new Date(year, month, 1).getDay();
@@ -186,23 +157,20 @@ function CalendarView({ month, year, setMonth, setYear, workoutsByDate, selected
   const cells = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
- 
+
   const prev = () => { if (month === 0) { setMonth(11); setYear(year-1); } else setMonth(month-1); };
   const next = () => { if (month === 11) { setMonth(0); setYear(year+1); } else setMonth(month+1); };
- 
+
   return (
     <div style={{ padding: "0 20px" }}>
-      {/* Month nav */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <button onClick={prev} style={iconBtnStyle}>{Icons.chevLeft}</button>
         <span style={{ fontSize: 17, fontWeight: 600 }}>{monthNames[month]} {year}</span>
         <button onClick={next} style={iconBtnStyle}>{Icons.chevRight}</button>
       </div>
-      {/* Day headers */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginBottom: 4 }}>
         {dayLabels.map(d => <div key={d} style={{ textAlign: "center", fontSize: 11, fontWeight: 600, color: C.textDim, padding: "4px 0", textTransform: "uppercase", letterSpacing: 1 }}>{d}</div>)}
       </div>
-      {/* Grid */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 }}>
         {cells.map((d, i) => {
           if (d === null) return <div key={`e${i}`} />;
@@ -229,7 +197,6 @@ function CalendarView({ month, year, setMonth, setYear, workoutsByDate, selected
           );
         })}
       </div>
-      {/* Selected date detail */}
       {selectedDate && (
         <div style={{ marginTop: 20 }}>
           <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 10px", color: C.textDim }}>
@@ -245,7 +212,7 @@ function CalendarView({ month, year, setMonth, setYear, workoutsByDate, selected
     </div>
   );
 }
- 
+
 // ======================== STATS ========================
 function StatsView({ workouts }) {
   const stats = useMemo(() => {
@@ -256,8 +223,7 @@ function StatsView({ workouts }) {
     const totalReps = lifts.reduce((s, w) => s + (w.sets || []).reduce((a, set) => a + (parseInt(set.reps) || 0), 0), 0);
     const totalSteps = walks.reduce((s, w) => s + (parseInt(w.steps) || 0), 0);
     const totalMinutes = workouts.reduce((s, w) => s + (parseInt(w.duration) || 0), 0);
- 
-    // Weekly data (last 8 weeks)
+
     const now = new Date();
     const weeks = [];
     for (let i = 7; i >= 0; i--) {
@@ -271,20 +237,18 @@ function StatsView({ workouts }) {
       }).length;
       weeks.push({ label: `W${8-i}`, count });
     }
- 
-    // Top lifts
+
     const liftCounts = {};
     lifts.forEach(w => { liftCounts[w.exercise] = (liftCounts[w.exercise] || 0) + 1; });
     const topLifts = Object.entries(liftCounts).sort((a,b) => b[1]-a[1]).slice(0,5);
- 
+
     return { total, lifts: lifts.length, walks: walks.length, totalSets, totalReps, totalSteps, totalMinutes, weeks, topLifts };
   }, [workouts]);
- 
+
   const maxWeek = Math.max(...stats.weeks.map(w => w.count), 1);
- 
+
   return (
     <div style={{ padding: "0 20px" }}>
-      {/* Summary cards */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
         <StatCard label="Total Workouts" value={stats.total} color={C.accent} />
         <StatCard label="Lifting Sessions" value={stats.lifts} color={C.accent} />
@@ -294,8 +258,7 @@ function StatsView({ workouts }) {
         <StatCard label="Total Reps" value={stats.totalReps.toLocaleString()} color={C.accent} />
         <StatCard label="Total Steps" value={stats.totalSteps.toLocaleString()} color={C.walk} />
       </div>
- 
-      {/* Weekly chart */}
+
       <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 16 }}>
         <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 16px", color: C.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Weekly Activity</h3>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 120 }}>
@@ -308,8 +271,7 @@ function StatsView({ workouts }) {
           ))}
         </div>
       </div>
- 
-      {/* Top exercises */}
+
       {stats.topLifts.length > 0 && (
         <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}` }}>
           <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 14px", color: C.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Top Exercises</h3>
@@ -321,12 +283,12 @@ function StatsView({ workouts }) {
           ))}
         </div>
       )}
- 
+
       {workouts.length === 0 && <p style={{ color: C.textDim, textAlign: "center", marginTop: 40, fontSize: 14 }}>Log some workouts to see your stats!</p>}
     </div>
   );
 }
- 
+
 function StatCard({ label, value, color }) {
   return (
     <div style={{ background: C.surface, borderRadius: 12, padding: "16px 14px", border: `1px solid ${C.border}` }}>
@@ -335,7 +297,7 @@ function StatCard({ label, value, color }) {
     </div>
   );
 }
- 
+
 // ======================== LOG ========================
 function LogView({ workouts, onEdit, onDelete }) {
   const sorted = useMemo(() => [...workouts].sort((a, b) => b.date.localeCompare(a.date) || (b.time || "").localeCompare(a.time || "")), [workouts]);
@@ -346,62 +308,7 @@ function LogView({ workouts, onEdit, onDelete }) {
     </div>
   );
 }
- 
-// ======================== WORKOUT CARD ========================
-function WorkoutCard({ w, onEdit, onDelete, showDate }) {
-  const isLift = w.type === "lift";
-  return (
-    <div style={{
-      background: C.surface, borderRadius: 14, padding: 16, marginBottom: 10,
-      border: `1px solid ${C.border}`, transition: "all .15s",
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: isLift ? C.accentDim : C.walkDim, display: "flex", alignItems: "center", justifyContent: "center", color: isLift ? C.accent : C.walk }}>
-            {isLift ? Icons.dumbbell : Icons.walk}
-          </div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 600 }}>{isLift ? w.exercise : "Walking"}</div>
-            <div style={{ fontSize: 12, color: C.textDim, marginTop: 2 }}>
-              {showDate && <>{parseDate(w.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · </>}
-              {w.time && <>{w.time} · </>}
-              {w.duration && <>{w.duration} min</>}
-            </div>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 4 }}>
-          <button onClick={() => onEdit(w)} style={{ ...iconBtnSmStyle, color: C.textDim }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </button>
-          <button onClick={() => onDelete(w.id)} style={{ ...iconBtnSmStyle, color: C.red }}>
-            {Icons.trash}
-          </button>
-        </div>
-      </div>
-      {/* Details */}
-      {isLift && w.sets && w.sets.length > 0 && (
-        <div style={{ marginTop: 12, background: C.surface2, borderRadius: 10, padding: "10px 12px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr", gap: 4, fontSize: 11, color: C.textDim, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-            <span>Set</span><span>Reps</span><span>Weight</span>
-          </div>
-          {w.sets.map((s, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr", gap: 4, fontSize: 14, fontFamily: fontMono, padding: "3px 0" }}>
-              <span style={{ color: C.textDim }}>{i+1}</span>
-              <span>{s.reps}</span>
-              <span>{s.weight ? `${s.weight} lbs` : "—"}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {!isLift && w.steps && (
-        <div style={{ marginTop: 10, fontSize: 22, fontWeight: 700, fontFamily: fontMono, color: C.walk }}>
-          {parseInt(w.steps).toLocaleString()} <span style={{ fontSize: 13, fontWeight: 500, color: C.textDim }}>steps</span>
-        </div>
-      )}
-    </div>
-  );
-}
- 
+
 // ======================== FORM ========================
 function WorkoutForm({ onClose, onSave, initial }) {
   const isEdit = initial && initial.id;
@@ -413,11 +320,11 @@ function WorkoutForm({ onClose, onSave, initial }) {
   const [steps, setSteps] = useState(initial?.steps || "");
   const [sets, setSets] = useState(initial?.sets || [{ reps: "", weight: "" }]);
   const [showPresets, setShowPresets] = useState(false);
- 
+
   const addSet = () => setSets(s => [...s, { reps: "", weight: "" }]);
   const removeSet = (i) => setSets(s => s.filter((_, j) => j !== i));
   const updateSet = (i, field, val) => setSets(s => s.map((x, j) => j === i ? { ...x, [field]: val } : x));
- 
+
   const handleSave = () => {
     const base = { date, time, duration, type };
     if (type === "lift") {
@@ -427,18 +334,16 @@ function WorkoutForm({ onClose, onSave, initial }) {
       onSave({ ...base, steps, ...(isEdit ? { id: initial.id } : {}) });
     }
   };
- 
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", backdropFilter: "blur(6px)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 520, maxHeight: "88vh", overflow: "auto", padding: "24px 20px 32px" }}>
-        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{isEdit ? "Edit" : "Log"} Workout</h2>
           <button onClick={onClose} style={{ ...iconBtnStyle, color: C.textDim }}>{Icons.x}</button>
         </div>
- 
-        {/* Type toggle */}
+
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
           {[["lift","Lifting",Icons.dumbbell, C.accent],["walk","Walking",Icons.walk, C.walk]].map(([k,label,icon,color]) => (
             <button key={k} onClick={() => setType(k)} style={{
@@ -450,8 +355,7 @@ function WorkoutForm({ onClose, onSave, initial }) {
             </button>
           ))}
         </div>
- 
-        {/* Date / Time / Duration row */}
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
           <label style={labelStyle}>
             Date
@@ -466,10 +370,9 @@ function WorkoutForm({ onClose, onSave, initial }) {
             <input type="number" value={duration} onChange={e => setDuration(e.target.value)} placeholder="0" style={inputStyle} />
           </label>
         </div>
- 
+
         {type === "lift" ? (
           <>
-            {/* Exercise */}
             <label style={{ ...labelStyle, marginBottom: 8, position: "relative" }}>
               Exercise
               <div style={{ display: "flex", gap: 8 }}>
@@ -489,8 +392,7 @@ function WorkoutForm({ onClose, onSave, initial }) {
                 ))}
               </div>
             )}
- 
-            {/* Sets */}
+
             <div style={{ marginTop: 8, marginBottom: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: 0.5 }}>Sets</span>
@@ -516,8 +418,7 @@ function WorkoutForm({ onClose, onSave, initial }) {
             <input type="number" value={steps} onChange={e => setSteps(e.target.value)} placeholder="e.g. 8000" style={inputStyle} />
           </label>
         )}
- 
-        {/* Save */}
+
         <button onClick={handleSave} style={{ ...btnStyle, background: C.accent, color: "#0a0a0b", fontWeight: 700, width: "100%", padding: "14px", fontSize: 16, marginTop: 8 }}>
           {isEdit ? "Update" : "Save"} Workout
         </button>
@@ -525,25 +426,98 @@ function WorkoutForm({ onClose, onSave, initial }) {
     </div>
   );
 }
- 
-// ======================== SHARED STYLES ========================
-const btnStyle = {
-  border: "none", borderRadius: 10, cursor: "pointer", fontSize: 13, fontFamily: font, transition: "all .15s",
-};
-const tabStyle = {
-  ...btnStyle, padding: "8px 14px", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600,
-  border: "1px solid transparent", borderRadius: 10,
-};
-const iconBtnStyle = {
-  background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 8, cursor: "pointer", color: C.text, display: "flex", alignItems: "center", justifyContent: "center",
-};
-const iconBtnSmStyle = {
-  background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex", alignItems: "center", borderRadius: 6,
-};
-const inputStyle = {
-  background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px", color: C.text,
-  fontSize: 14, fontFamily: font, outline: "none", width: "100%", boxSizing: "border-box",
-};
-const labelStyle = {
+
+// ======================== MAIN APP ========================
+function WorkoutTracker() {
+  const [workouts, setWorkouts] = useState([]);
+  const [view, setView] = useState("calendar");
+  const [showForm, setShowForm] = useState(false);
+  const [calMonth, setCalMonth] = useState(new Date().getMonth());
+  const [calYear, setCalYear] = useState(new Date().getFullYear());
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [editId, setEditId] = useState(null);
+
+  useEffect(() => {
+    setWorkouts(loadWorkouts());
+  }, []);
+
+  useEffect(() => {
+    saveWorkouts(workouts);
+  }, [workouts]);
+
+  const addWorkout = useCallback((w) => {
+    setWorkouts(prev => [...prev, { ...w, id: uid() }]);
+    setShowForm(false);
+  }, []);
+
+  const updateWorkout = useCallback((w) => {
+    setWorkouts(prev => prev.map(x => x.id === w.id ? w : x));
+    setShowForm(false);
+    setEditId(null);
+  }, []);
+
+  const deleteWorkout = useCallback((id) => {
+    setWorkouts(prev => prev.filter(x => x.id !== id));
+  }, []);
+
+  const openEdit = useCallback((w) => {
+    setEditId(w.id);
+    setShowForm(true);
+  }, []);
+
+  const workoutsByDate = useMemo(() => {
+    const m = {};
+    workouts.forEach(w => { (m[w.date] = m[w.date] || []).push(w); });
+    return m;
+  }, [workouts]);
+
+  return (
+    <div style={{ fontFamily: font, background: C.bg, color: C.text, minHeight: "100vh", maxWidth: 520, margin: "0 auto", padding: "0 0 100px", position: "relative" }}>
+      <div style={{ padding: "28px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>Workout Tracker</h1>
+          <p style={{ color: C.textDim, fontSize: 13, margin: "4px 0 0", fontWeight: 500 }}>{monthNames[new Date().getMonth()]} {new Date().getDate()}, {new Date().getFullYear()}</p>
+        </div>
+        <button onClick={() => { setEditId(null); setShowForm(true); }} style={{ ...btnStyle, background: C.accent, color: "#0a0a0b", fontWeight: 700, display: "flex", alignItems: "center", gap: 6, padding: "10px 18px" }}>
+          {Icons.plus} Log Workout
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 4, padding: "8px 20px 16px" }}>
+        {[["calendar","Calendar",Icons.calendar],["stats","Stats",Icons.chart],["log","History",Icons.list]].map(([k,label,icon]) => (
+          <button key={k} onClick={() => setView(k)} style={{ ...tabStyle, background: view===k ? C.surface2 : "transparent", color: view===k ? C.text : C.textDim, borderColor: view===k ? C.border : "transparent" }}>
+            {icon} {label}
+          </button>
+        ))}
+      </div>
+
+      {view === "calendar" && (
+        <CalendarView
+          month={calMonth} year={calYear}
+          setMonth={setCalMonth} setYear={setCalYear}
+          workoutsByDate={workoutsByDate}
+          selectedDate={selectedDate} setSelectedDate={setSelectedDate}
+          onEdit={openEdit} onDelete={deleteWorkout}
+        />
+      )}
+      {view === "stats" && <StatsView workouts={workouts} />}
+      {view === "log" && <LogView workouts={workouts} onEdit={openEdit} onDelete={deleteWorkout} />}
+
+      {showForm && (
+        <WorkoutForm
+          onClose={() => { setShowForm(false); setEditId(null); }}
+          onSave={editId ? updateWorkout : addWorkout}
+          initial={editId ? workouts.find(w => w.id === editId) : (selectedDate ? { date: selectedDate } : null)}
+        />
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<WorkoutTracker />);
+  </script>
+</body>
+</html>
   display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: 0.5,
 };
