@@ -10,6 +10,9 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0a0a0b; }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-app-compat.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-auth-compat.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-firestore-compat.min.js"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -18,6 +21,26 @@
   <div id="root"></div>
   <script type="text/babel">
 const { useState, useMemo, useCallback, useEffect } = React;
+
+// --- Firebase init ---
+const firebaseConfig = {
+  apiKey: "AIzaSyDPY3XXgpXPOpYOdRWKyiShbWIuBCRwh1o",
+  authDomain: "lift-tracker-116bf.firebaseapp.com",
+  projectId: "lift-tracker-116bf",
+  storageBucket: "lift-tracker-116bf.firebasestorage.app",
+  messagingSenderId: "895956155830",
+  appId: "1:895956155830:web:409ec194a03bf7428ed517"
+};
+let db = null;
+let auth = null;
+try {
+  const app = firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+  auth = firebase.auth();
+  console.log("Firebase connected");
+} catch (e) {
+  console.error("Firebase init failed:", e);
+}
 
 const STORAGE_KEY = "workouts-data";
 
@@ -30,12 +53,65 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7
 
 const LIFT_PRESETS = ["Bench Press","Squat","Deadlift","Overhead Press","Barbell Row","Lat Pulldown","Leg Press","Bicep Curl","Tricep Extension","Lunges","Calf Raise","Dumbbell Fly"];
 
-// --- Storage (localStorage only for standalone) ---
+const EQUIP_TYPES = [
+  { value: "", label: "—" },
+  { value: "BB", label: "BB" },
+  { value: "DB", label: "DB" },
+  { value: "KB", label: "KB" },
+  { value: "MB", label: "MB" },
+  { value: "SA", label: "SA" },
+  { value: "SL", label: "SL" },
+];
+const EQUIP_LABELS = { BB: "Barbell", DB: "Dumbbell", KB: "Kettlebell", MB: "Medicine Ball", SA: "Single Arm", SL: "Single Leg" };
+
+// --- Storage (localStorage + Firestore) ---
+const WORKOUTS_COLLECTION = "workouts";
+
 function loadWorkouts() {
   try { const d = localStorage.getItem(STORAGE_KEY); return d ? JSON.parse(d) : []; } catch { return []; }
 }
-function saveWorkouts(w) {
+function saveWorkoutsLocal(w) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(w)); } catch {}
+}
+
+// Firestore helpers (user-scoped)
+function getUserCollection() {
+  const user = auth && auth.currentUser;
+  if (!db || !user) return null;
+  return db.collection("users").doc(user.uid).collection("workouts");
+}
+
+async function loadWorkoutsFromFirestore() {
+  const col = getUserCollection();
+  if (!col) return null;
+  try {
+    const snapshot = await col.get();
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (e) { console.error("Firestore load error:", e); return null; }
+}
+
+async function addWorkoutToFirestore(workout) {
+  const col = getUserCollection();
+  if (!col) return;
+  try {
+    await col.doc(workout.id).set(workout);
+  } catch (e) { console.error("Firestore add error:", e); }
+}
+
+async function updateWorkoutInFirestore(workout) {
+  const col = getUserCollection();
+  if (!col) return;
+  try {
+    await col.doc(workout.id).set(workout);
+  } catch (e) { console.error("Firestore update error:", e); }
+}
+
+async function deleteWorkoutFromFirestore(id) {
+  const col = getUserCollection();
+  if (!col) return;
+  try {
+    await col.doc(id).delete();
+  } catch (e) { console.error("Firestore delete error:", e); }
 }
 
 // --- Icons (inline SVG) ---
@@ -51,6 +127,10 @@ const Icons = {
   list: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/></svg>,
   x: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
   edit: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+  timer: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M9 1h6"/><path d="M12 1v3"/></svg>,
+  play: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="6 3 20 12 6 21 6 3" fill="currentColor"/></svg>,
+  pause: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="8" y1="5" x2="8" y2="19"/><line x1="16" y1="5" x2="16" y2="19"/></svg>,
+  reset: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10"/></svg>,
 };
 
 // --- Styles ---
@@ -91,6 +171,9 @@ const inputStyle = {
   background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px", color: C.text,
   fontSize: 14, fontFamily: font, outline: "none", width: "100%", boxSizing: "border-box",
 };
+const selectStyle = {
+  ...inputStyle, appearance: "none", WebkitAppearance: "none", backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237a7a85' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center", paddingRight: 28,
+};
 const labelStyle = {
   display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: 0.5,
 };
@@ -111,8 +194,8 @@ function WorkoutCard({ w, onEdit, onDelete, showDate }) {
           <div>
             <div style={{ fontSize: 15, fontWeight: 600 }}>{isLift ? w.exercise : "Walking"}</div>
             <div style={{ fontSize: 12, color: C.textDim, marginTop: 2 }}>
-              {showDate && <>{parseDate(w.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} &middot; </>}
-              {w.time && <>{w.time} &middot; </>}
+              {showDate && <>{parseDate(w.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</>}
+              {showDate && w.duration && <> &middot; </>}
               {w.duration && <>{w.duration} min</>}
             </div>
           </div>
@@ -128,14 +211,15 @@ function WorkoutCard({ w, onEdit, onDelete, showDate }) {
       </div>
       {isLift && w.sets && w.sets.length > 0 && (
         <div style={{ marginTop: 12, background: C.surface2, borderRadius: 10, padding: "10px 12px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr", gap: 4, fontSize: 11, color: C.textDim, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-            <span>Set</span><span>Reps</span><span>Weight</span>
+          <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 1fr 50px", gap: 4, fontSize: 11, color: C.textDim, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+            <span>Set</span><span>Reps</span><span>Weight</span><span>Type</span>
           </div>
           {w.sets.map((s, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr", gap: 4, fontSize: 14, fontFamily: fontMono, padding: "3px 0" }}>
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "36px 1fr 1fr 50px", gap: 4, fontSize: 14, fontFamily: fontMono, padding: "3px 0" }}>
               <span style={{ color: C.textDim }}>{i+1}</span>
               <span>{s.reps}</span>
               <span>{s.weight ? `${s.weight} lbs` : "—"}</span>
+              <span style={{ color: s.equip ? C.accent : C.textDim, fontSize: 12, fontWeight: 600 }}>{s.equip || "—"}</span>
             </div>
           ))}
         </div>
@@ -143,6 +227,11 @@ function WorkoutCard({ w, onEdit, onDelete, showDate }) {
       {!isLift && w.steps && (
         <div style={{ marginTop: 10, fontSize: 22, fontWeight: 700, fontFamily: fontMono, color: C.walk }}>
           {parseInt(w.steps).toLocaleString()} <span style={{ fontSize: 13, fontWeight: 500, color: C.textDim }}>steps</span>
+        </div>
+      )}
+      {w.notes && (
+        <div style={{ marginTop: 10, padding: "10px 12px", background: C.surface2, borderRadius: 10, fontSize: 13, color: C.textDim, lineHeight: 1.5, fontStyle: "italic", whiteSpace: "pre-wrap" }}>
+          {w.notes}
         </div>
       )}
     </div>
@@ -315,18 +404,18 @@ function WorkoutForm({ onClose, onSave, initial }) {
   const [type, setType] = useState(initial?.type || "lift");
   const [exercise, setExercise] = useState(initial?.exercise || "");
   const [date, setDate] = useState(initial?.date || fmt(new Date()));
-  const [time, setTime] = useState(initial?.time || "");
   const [duration, setDuration] = useState(initial?.duration || "");
   const [steps, setSteps] = useState(initial?.steps || "");
-  const [sets, setSets] = useState(initial?.sets || [{ reps: "", weight: "" }]);
+  const [sets, setSets] = useState(initial?.sets || [{ reps: "", weight: "", equip: "" }]);
+  const [notes, setNotes] = useState(initial?.notes || "");
   const [showPresets, setShowPresets] = useState(false);
 
-  const addSet = () => setSets(s => [...s, { reps: "", weight: "" }]);
+  const addSet = () => setSets(s => [...s, { reps: "", weight: "", equip: "" }]);
   const removeSet = (i) => setSets(s => s.filter((_, j) => j !== i));
   const updateSet = (i, field, val) => setSets(s => s.map((x, j) => j === i ? { ...x, [field]: val } : x));
 
   const handleSave = () => {
-    const base = { date, time, duration, type };
+    const base = { date, duration, type, notes: notes.trim() };
     if (type === "lift") {
       if (!exercise.trim()) return;
       onSave({ ...base, exercise: exercise.trim(), sets, ...(isEdit ? { id: initial.id } : {}) });
@@ -356,14 +445,10 @@ function WorkoutForm({ onClose, onSave, initial }) {
           ))}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
           <label style={labelStyle}>
             Date
             <input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} />
-          </label>
-          <label style={labelStyle}>
-            Time
-            <input type="time" value={time} onChange={e => setTime(e.target.value)} style={inputStyle} />
           </label>
           <label style={labelStyle}>
             Minutes
@@ -401,13 +486,16 @@ function WorkoutForm({ onClose, onSave, initial }) {
                 </button>
               </div>
               {sets.map((s, i) => (
-                <div key={i} style={{ display: "grid", gridTemplateColumns: "32px 1fr 1fr 32px", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 70px 28px", gap: 6, alignItems: "center", marginBottom: 8 }}>
                   <span style={{ fontSize: 13, fontFamily: fontMono, color: C.textDim, textAlign: "center" }}>{i+1}</span>
                   <input type="number" placeholder="Reps" value={s.reps} onChange={e => updateSet(i, "reps", e.target.value)} style={inputStyle} />
-                  <input type="number" placeholder="Weight (lbs)" value={s.weight} onChange={e => updateSet(i, "weight", e.target.value)} style={inputStyle} />
-                  {sets.length > 1 && (
+                  <input type="number" placeholder="Weight" value={s.weight} onChange={e => updateSet(i, "weight", e.target.value)} style={inputStyle} />
+                  <select value={s.equip || ""} onChange={e => updateSet(i, "equip", e.target.value)} style={selectStyle}>
+                    {EQUIP_TYPES.map(t => <option key={t.value} value={t.value}>{t.value ? t.label : "Type"}</option>)}
+                  </select>
+                  {sets.length > 1 ? (
                     <button onClick={() => removeSet(i)} style={{ ...iconBtnSmStyle, color: C.red }}>{Icons.x}</button>
-                  )}
+                  ) : <div />}
                 </div>
               ))}
             </div>
@@ -419,6 +507,13 @@ function WorkoutForm({ onClose, onSave, initial }) {
           </label>
         )}
 
+        {/* Notes */}
+        <label style={{ ...labelStyle, marginTop: 12, marginBottom: 4 }}>
+          Notes
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="How did it feel? Anything to remember..."
+            rows={3} style={{ ...inputStyle, resize: "vertical", minHeight: 60, lineHeight: 1.5 }} />
+        </label>
+
         <button onClick={handleSave} style={{ ...btnStyle, background: C.accent, color: "#0a0a0b", fontWeight: 700, width: "100%", padding: "14px", fontSize: 16, marginTop: 8 }}>
           {isEdit ? "Update" : "Save"} Workout
         </button>
@@ -427,8 +522,289 @@ function WorkoutForm({ onClose, onSave, initial }) {
   );
 }
 
+// ======================== AUTH SCREEN ========================
+function AuthScreen({ onAuth }) {
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    setError("");
+    if (!email.trim() || !password.trim()) { setError("Please fill in all fields"); return; }
+    setLoading(true);
+    try {
+      if (isSignUp) {
+        await auth.createUserWithEmailAndPassword(email, password);
+      } else {
+        await auth.signInWithEmailAndPassword(email, password);
+      }
+    } catch (e) {
+      const msg = e.code === "auth/user-not-found" ? "No account found with that email"
+        : e.code === "auth/wrong-password" ? "Incorrect password"
+        : e.code === "auth/invalid-credential" ? "Invalid email or password"
+        : e.code === "auth/email-already-in-use" ? "An account with that email already exists"
+        : e.code === "auth/weak-password" ? "Password must be at least 6 characters"
+        : e.code === "auth/invalid-email" ? "Please enter a valid email"
+        : e.message;
+      setError(msg);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ fontFamily: font, background: C.bg, color: C.text, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 400 }}>
+        <div style={{ textAlign: "center", marginBottom: 40 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 64, height: 64, borderRadius: 16, background: C.accentDim, marginBottom: 16 }}>
+            {Icons.dumbbell}
+          </div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: "0 0 6px", letterSpacing: "-0.5px" }}>Workout Tracker</h1>
+          <p style={{ color: C.textDim, fontSize: 14, margin: 0 }}>{isSignUp ? "Create an account to get started" : "Sign in to your account"}</p>
+        </div>
+
+        <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}` }}>
+          <label style={{ ...labelStyle, marginBottom: 16 }}>
+            Email
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" style={inputStyle}
+              onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+          </label>
+          <label style={{ ...labelStyle, marginBottom: 8 }}>
+            Password
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={inputStyle}
+              onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+          </label>
+
+          {error && (
+            <div style={{ background: C.redDim, border: `1px solid ${C.red}33`, borderRadius: 10, padding: "10px 14px", marginTop: 12, fontSize: 13, color: C.red }}>
+              {error}
+            </div>
+          )}
+
+          <button onClick={handleSubmit} disabled={loading} style={{
+            ...btnStyle, background: C.accent, color: "#0a0a0b", fontWeight: 700, width: "100%", padding: "14px", fontSize: 16, marginTop: 20,
+            opacity: loading ? 0.6 : 1,
+          }}>
+            {loading ? "Please wait..." : isSignUp ? "Create Account" : "Sign In"}
+          </button>
+        </div>
+
+        <p style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: C.textDim }}>
+          {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
+          <span onClick={() => { setIsSignUp(!isSignUp); setError(""); }} style={{ color: C.accent, cursor: "pointer", fontWeight: 600 }}>
+            {isSignUp ? "Sign In" : "Sign Up"}
+          </span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ======================== REST TIMER ========================
+const REST_PRESETS = [30, 60, 90, 120, 180];
+
+function RestTimer({ onClose }) {
+  const [mode, setMode] = useState("countdown"); // countdown | stopwatch | counter
+  const [seconds, setSeconds] = useState(90); // countdown starting value
+  const [countdownFrom, setCountdownFrom] = useState(90);
+  const [running, setRunning] = useState(false);
+  const [elapsed, setElapsed] = useState(0); // for stopwatch
+  const [count, setCount] = useState(0); // for counter
+  const [finished, setFinished] = useState(false);
+
+  const intervalRef = React.useRef(null);
+
+  const clear = () => { if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+
+  useEffect(() => {
+    if (!running) { clear(); return; }
+    intervalRef.current = setInterval(() => {
+      if (mode === "countdown") {
+        setSeconds(prev => {
+          if (prev <= 1) {
+            clear();
+            setRunning(false);
+            setFinished(true);
+            // Try to vibrate
+            try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch {}
+            return 0;
+          }
+          return prev - 1;
+        });
+      } else {
+        setElapsed(prev => prev + 1);
+      }
+    }, 1000);
+    return clear;
+  }, [running, mode]);
+
+  const formatTime = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  };
+
+  const handleStart = () => { setFinished(false); setRunning(true); };
+  const handlePause = () => setRunning(false);
+  const handleReset = () => {
+    setRunning(false);
+    setFinished(false);
+    if (mode === "countdown") setSeconds(countdownFrom);
+    else if (mode === "stopwatch") setElapsed(0);
+    else setCount(0);
+  };
+  const setPreset = (val) => {
+    setCountdownFrom(val);
+    setSeconds(val);
+    setRunning(false);
+    setFinished(false);
+  };
+  const switchMode = (m) => {
+    setRunning(false);
+    setFinished(false);
+    setMode(m);
+    if (m === "countdown") setSeconds(countdownFrom);
+    else if (m === "stopwatch") setElapsed(0);
+  };
+
+  const timerColor = finished ? C.red : (mode === "countdown" ? C.accent : mode === "stopwatch" ? C.walk : C.accent);
+  const progressPct = mode === "countdown" && countdownFrom > 0 ? ((countdownFrom - seconds) / countdownFrom) * 100 : 0;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", backdropFilter: "blur(6px)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 520, padding: "24px 20px 32px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{mode === "counter" ? "Counter" : "Rest Timer"}</h2>
+          <button onClick={onClose} style={{ ...iconBtnStyle, color: C.textDim }}>{Icons.x}</button>
+        </div>
+
+        {/* Mode toggle */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 24 }}>
+          {[["countdown", "Countdown", C.accent, C.accentDim], ["stopwatch", "Stopwatch", C.walk, C.walkDim], ["counter", "Counter", C.accent, C.accentDim]].map(([k, label, col, dim]) => (
+            <button key={k} onClick={() => switchMode(k)} style={{
+              flex: 1, padding: "10px 6px", borderRadius: 10, border: `1.5px solid ${mode === k ? col : C.border}`,
+              background: mode === k ? dim : "transparent",
+              color: mode === k ? col : C.textDim, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: font,
+            }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Timer display */}
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          {/* Progress ring / tappable counter */}
+          <div
+            onClick={mode === "counter" ? () => setCount(c => c + 1) : undefined}
+            style={{
+              position: "relative", width: 180, height: 180, margin: "0 auto 16px",
+              cursor: mode === "counter" ? "pointer" : "default",
+              userSelect: "none",
+            }}>
+            <svg width="180" height="180" viewBox="0 0 180 180" style={{ transform: "rotate(-90deg)" }}>
+              <circle cx="90" cy="90" r="80" fill={mode === "counter" ? C.accentDim : "none"} stroke={C.surface2} strokeWidth="6" />
+              {mode === "countdown" && (
+                <circle cx="90" cy="90" r="80" fill="none" stroke={timerColor} strokeWidth="6"
+                  strokeDasharray={`${2 * Math.PI * 80}`}
+                  strokeDashoffset={`${2 * Math.PI * 80 * (1 - progressPct / 100)}`}
+                  strokeLinecap="round"
+                  style={{ transition: "stroke-dashoffset 0.3s, stroke 0.3s" }}
+                />
+              )}
+              {mode === "stopwatch" && running && (
+                <circle cx="90" cy="90" r="80" fill="none" stroke={timerColor} strokeWidth="6"
+                  strokeDasharray="12 8" strokeLinecap="round"
+                  style={{ animation: "spin 4s linear infinite" }}
+                />
+              )}
+              {mode === "counter" && (
+                <circle cx="90" cy="90" r="80" fill="none" stroke={timerColor} strokeWidth="6" strokeLinecap="round" opacity="0.6" />
+              )}
+            </svg>
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+              {mode === "counter" ? (
+                <>
+                  <span style={{ fontSize: 64, fontWeight: 700, fontFamily: fontMono, color: timerColor, letterSpacing: "-2px", lineHeight: 1 }}>
+                    {count}
+                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: C.textDim, marginTop: 6, textTransform: "uppercase", letterSpacing: 1 }}>Tap to count</span>
+                </>
+              ) : (
+                <>
+                  <span style={{ fontSize: 48, fontWeight: 700, fontFamily: fontMono, color: timerColor, letterSpacing: "-2px" }}>
+                    {formatTime(mode === "countdown" ? seconds : elapsed)}
+                  </span>
+                  {finished && <span style={{ fontSize: 13, fontWeight: 600, color: C.red, marginTop: 4 }}>TIME'S UP!</span>}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Presets for countdown */}
+          {mode === "countdown" && !running && (
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 16, flexWrap: "wrap" }}>
+              {REST_PRESETS.map(p => (
+                <button key={p} onClick={() => setPreset(p)} style={{
+                  ...btnStyle, padding: "8px 14px", fontSize: 13, fontFamily: fontMono, fontWeight: 600,
+                  background: countdownFrom === p ? C.accentDim : C.surface2,
+                  color: countdownFrom === p ? C.accent : C.textDim,
+                  border: countdownFrom === p ? `1px solid ${C.accent}44` : `1px solid ${C.border}`,
+                }}>
+                  {formatTime(p)}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Custom input for countdown */}
+          {mode === "countdown" && !running && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 12, color: C.textDim, fontWeight: 600, textTransform: "uppercase" }}>Custom (sec)</span>
+              <input type="number" value={countdownFrom} onChange={e => { const v = Math.max(0, parseInt(e.target.value) || 0); setCountdownFrom(v); setSeconds(v); }}
+                style={{ ...inputStyle, width: 80, textAlign: "center", fontFamily: fontMono }} />
+            </div>
+          )}
+        </div>
+
+        {/* Controls */}
+        <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+          <button onClick={handleReset} style={{
+            ...iconBtnStyle, width: 52, height: 52, borderRadius: 14, color: C.textDim,
+          }}>
+            {Icons.reset}
+          </button>
+          {mode !== "counter" && (
+            <button onClick={running ? handlePause : handleStart} style={{
+              ...btnStyle, width: 120, height: 52, borderRadius: 14, fontSize: 15, fontWeight: 700,
+              background: running ? C.surface3 : timerColor,
+              color: running ? C.text : "#0a0a0b",
+              border: running ? `1px solid ${C.border}` : "none",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}>
+              {running ? Icons.pause : Icons.play}
+              {running ? "Pause" : "Start"}
+            </button>
+          )}
+          {mode === "counter" && (
+            <button onClick={() => setCount(c => c + 1)} style={{
+              ...btnStyle, width: 120, height: 52, borderRadius: 14, fontSize: 15, fontWeight: 700,
+              background: timerColor, color: "#0a0a0b", border: "none",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}>
+              {Icons.plus} Count
+            </button>
+          )}
+        </div>
+      </div>
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
 // ======================== MAIN APP ========================
-function WorkoutTracker() {
+function WorkoutTracker({ user }) {
   const [workouts, setWorkouts] = useState([]);
   const [view, setView] = useState("calendar");
   const [showForm, setShowForm] = useState(false);
@@ -436,28 +812,45 @@ function WorkoutTracker() {
   const [calYear, setCalYear] = useState(new Date().getFullYear());
   const [selectedDate, setSelectedDate] = useState(null);
   const [editId, setEditId] = useState(null);
+  const [showTimer, setShowTimer] = useState(false);
 
+  // Load from Firestore on mount. Firestore is the source of truth when signed in.
   useEffect(() => {
-    setWorkouts(loadWorkouts());
+    (async () => {
+      const firestoreData = await loadWorkoutsFromFirestore();
+      if (firestoreData !== null) {
+        // Successfully connected to Firestore (even if empty) — use it as truth.
+        setWorkouts(firestoreData);
+        saveWorkoutsLocal(firestoreData);
+      } else {
+        // Firestore unavailable — fall back to localStorage for offline use.
+        setWorkouts(loadWorkouts());
+      }
+    })();
   }, []);
 
+  // Keep localStorage in sync with current state (including when empty)
   useEffect(() => {
-    saveWorkouts(workouts);
+    saveWorkoutsLocal(workouts);
   }, [workouts]);
 
   const addWorkout = useCallback((w) => {
-    setWorkouts(prev => [...prev, { ...w, id: uid() }]);
+    const workout = { ...w, id: uid() };
+    setWorkouts(prev => [...prev, workout]);
+    addWorkoutToFirestore(workout);
     setShowForm(false);
   }, []);
 
   const updateWorkout = useCallback((w) => {
     setWorkouts(prev => prev.map(x => x.id === w.id ? w : x));
+    updateWorkoutInFirestore(w);
     setShowForm(false);
     setEditId(null);
   }, []);
 
   const deleteWorkout = useCallback((id) => {
     setWorkouts(prev => prev.filter(x => x.id !== id));
+    deleteWorkoutFromFirestore(id);
   }, []);
 
   const openEdit = useCallback((w) => {
@@ -476,11 +869,16 @@ function WorkoutTracker() {
       <div style={{ padding: "28px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, letterSpacing: "-0.5px" }}>Workout Tracker</h1>
-          <p style={{ color: C.textDim, fontSize: 13, margin: "4px 0 0", fontWeight: 500 }}>{monthNames[new Date().getMonth()]} {new Date().getDate()}, {new Date().getFullYear()}</p>
+          <p style={{ color: C.textDim, fontSize: 13, margin: "4px 0 0", fontWeight: 500 }}>{user.email}</p>
         </div>
-        <button onClick={() => { setEditId(null); setShowForm(true); }} style={{ ...btnStyle, background: C.accent, color: "#0a0a0b", fontWeight: 700, display: "flex", alignItems: "center", gap: 6, padding: "10px 18px" }}>
-          {Icons.plus} Log Workout
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={() => { setEditId(null); setShowForm(true); }} style={{ ...btnStyle, background: C.accent, color: "#0a0a0b", fontWeight: 700, display: "flex", alignItems: "center", gap: 6, padding: "10px 18px" }}>
+            {Icons.plus} Log
+          </button>
+          <button onClick={() => auth.signOut()} style={{ ...iconBtnStyle, color: C.textDim }} title="Sign out">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 4, padding: "8px 20px 16px" }}>
@@ -489,6 +887,9 @@ function WorkoutTracker() {
             {icon} {label}
           </button>
         ))}
+        <button onClick={() => setShowTimer(true)} style={{ ...tabStyle, background: "transparent", color: C.textDim, borderColor: "transparent", marginLeft: "auto" }}>
+          {Icons.timer}
+        </button>
       </div>
 
       {view === "calendar" && (
@@ -510,12 +911,41 @@ function WorkoutTracker() {
           initial={editId ? workouts.find(w => w.id === editId) : (selectedDate ? { date: selectedDate } : null)}
         />
       )}
+
+      {showTimer && <RestTimer onClose={() => setShowTimer(false)} />}
     </div>
   );
 }
 
+// ======================== APP ROOT (auth gate) ========================
+function App() {
+  const [user, setUser] = useState(undefined); // undefined = loading, null = signed out
+
+  useEffect(() => {
+    if (!auth) { setUser(null); return; }
+    const unsubscribe = auth.onAuthStateChanged((u) => {
+      setUser(u);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  if (user === undefined) {
+    return (
+      <div style={{ fontFamily: font, background: C.bg, color: C.textDim, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <p style={{ fontSize: 15 }}>Loading...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen />;
+  }
+
+  return <WorkoutTracker user={user} />;
+}
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<WorkoutTracker />);
+root.render(<App />);
   </script>
 </body>
 </html>
